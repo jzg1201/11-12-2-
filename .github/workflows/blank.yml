@@ -1,0 +1,104 @@
+# .github/workflows/task.yml
+
+# Workflow 的名稱
+name: 每天讓 GEMINI 生成一段名言佳句
+
+# 觸發 Workflow 的條件
+on:
+  workflow_dispatch: # 允許手動觸發
+  schedule:
+    # 使用 cron 語法來設定定時執行 (UTC 時間 01:30)
+    - cron: '30 01 * * *'
+
+# 工作內容 > 基於 ubuntu(linux) 執行 run-gemini-cli
+jobs:
+  run-gemini-cli:
+    runs-on: ubuntu-latest
+    permissions:
+      # 允許讀寫專案內容，以便 commit
+      contents: write 
+    steps:
+      # 步驟 1: 將專案檔案 (例如 content.json) checkout 到執行環境
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 步驟 2-1: 設定 Node.js v20 環境
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 步驟 2-2: 全域安裝最新版的 @google/gemini-cli
+      - name: Install Gemini CLI globally
+        run: npm install -g @google/gemini-cli@latest
+        
+      # 步驟 3: 執行 GeminiCLI，生成並更新 JSON 檔案
+      - name: Run Gemini to Generate Quote and Update JSON
+        env:
+          # ❗️❗️❗️ 重要：請確保您在 GitHub Secrets 中建立的 Secret 名稱是 GEMINI_API_KEY
+          # @google/gemini-cli 預設使用 GEMINI_API_KEY 這個環境變數
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # --- A. 取得台北時區的當前日期與時間 ---
+          # 設定時區為台北，並取得當前日期 (格式: YYYY-MM-DD)
+          CURRENT_DATE=$(TZ="Asia/Taipei" date +'%Y-%m-%d')
+          
+          echo "當前台北日期: $CURRENT_DATE"
+
+          # --- B. 詢問 geminicli 指令取得名言 ---
+          # 使用 gemini cli 進行詢問，並將輸出的內容存入變數 QUOTE
+          # 為了確保輸出只有純文本，建議加上一個明確的 system instruction
+          
+          # 將詢問提示存入變數
+          PROMPT="請你生成一句具有人生啟發或正能量的中文名言佳句，長度不要超過 30 個字。請確保只輸出名言佳句本身，不要包含任何開頭、結尾、標點符號或解釋。"
+          
+          # 執行 gemini cli，並移除輸出前後多餘的空白
+          QUOTE=$(gemini generate \
+            --model gemini-2.5-flash \
+            --prompt "$PROMPT" \
+            --system-instruction "你是一位專門生成簡短、啟發人心的中文名言佳句的專家。" \
+            --max-output-tokens 100 | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+          # 檢查是否成功取得名言
+          if [ -z "$QUOTE" ]; then
+            echo "::error::GEMINI CLI 未能成功生成名言佳句。請檢查 API Key 或指令。"
+            exit 1
+          fi
+          
+          echo "生成的名言佳句: $QUOTE"
+          
+          # --- C. 檢查並準備 content.json 檔案 ---
+          # 檢查 content.json 是否存在，不存在則建立一個空的 JSON 陣列
+          if [ ! -f content.json ]; then
+            echo "[]" > content.json
+          fi
+          
+          # --- D. 每次執行會把取得的資料寫入到 content.json 中 ---
+          # 建立新的 JSON 物件
+          NEW_RECORD="{\"date\":\"$CURRENT_DATE\", \"poem\":\"$QUOTE\"}"
+          
+          # 使用 jq (一個 JSON 處理工具) 來讀取現有的 JSON 檔案，並將新的紀錄新增到陣列的開頭 (prepend)
+          # 注意：ubuntu-latest 預設有安裝 jq
+          cat content.json | jq --argjson new_rec "$NEW_RECORD" '. | [$new_rec] + .' > temp.json
+          mv temp.json content.json
+          
+          echo "content.json 已更新。"
+      
+      # 步驟 4: Commit 並 Push 更新後的 JSON 檔案
+      - name: Commit and Push changes
+        run: |
+          # 設定 Git 使用者資訊
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # 只 add content.json 這個檔案
+          git add content.json
+
+          # 檢查是否有檔案變更，如果有才執行 commit 和 push
+          if ! git diff --staged --quiet; then
+            # 在 commit message 中加入日期，方便追蹤
+            git commit -m "feat(bot): ✨ 新增 $(TZ="Asia/Taipei" date +'%Y-%m-%d') 的名言佳句"
+            git push
+          else
+            echo "content.json 沒有變更，無需 commit。"
+          fi
