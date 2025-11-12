@@ -37,7 +37,7 @@ jobs:
         env:
           # ❗️❗️❗️ 重要：請確保您在 GitHub Secrets 中建立的 Secret 名稱是 GEMINI_API_KEY
           # @google/gemini-cli 預設使用 GEMINI_API_KEY 這個環境變數
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_KEY }}
         run: |
           # --- A. 取得台北時區的當前日期與時間 ---
           # 設定時區為台北，並取得當前日期 (格式: YYYY-MM-DD)
